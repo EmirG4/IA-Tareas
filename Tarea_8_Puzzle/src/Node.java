@@ -7,13 +7,13 @@ public class Node  {
     private String state;
     private Node parent;
     private int depth;
-    //public static int totalNodesCreated = 0;
+    public static int totalNodesCreated = 0;
     private int cost;
 
     public Node(String state, Node parent) {
         this.state = state;
         this.parent = parent;
-        //totalNodesCreated++;
+        totalNodesCreated++;
 
     }
 
