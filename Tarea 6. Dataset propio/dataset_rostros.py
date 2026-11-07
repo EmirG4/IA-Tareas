@@ -11,15 +11,15 @@ Integrantes:
     - Jonathan Daniel Valencia
 
 Descripción:
-    Programa en Python que arma un dataset de rostros con OpenCV y el
-    algoritmo Haar Cascade.
+    Este programa permite crear un dataset con 100 imágenes del rostro de cada
+    integrante del equipo y de las celebridades seleccionadas. Utiliza OpenCV y
+    clasificadores Haar Cascade para localizar las caras, recortarlas y guardar
+    las fotografías en carpetas separadas por persona.
 
-    Captura imágenes desde la cámara, detecta el rostro, lo recorta y lo
-    guarda. También recorta fotografías de famosos descargadas de Kaggle.
-    Se generan 100 imágenes por persona, cada una en su carpeta.
-
-    El dataset servirá más adelante para entrenar un modelo de
-    reconocimiento facial.
+    También permite procesar imágenes de famosos descargadas previamente,
+    para que todas las imágenes del dataset tengan el mismo tamaño. Este programa
+    solo prepara el dataset, en cambio, el entrenamiento del modelo de reconocimiento facial
+    se realizará en una etapa posterior.
 
 Instalación:
     pip install -r requirements.txt
@@ -37,66 +37,45 @@ import unicodedata
 import cv2
 import numpy as np
 
-
-# Carpeta donde está este archivo. Las demás rutas parten de ella
+# Se obtiene la ubicación del programa para localizar las carpetas y archivos del proyecto.
 CARPETA_BASE = os.path.dirname(os.path.abspath(__file__))
 
-# El dataset se divide en dos grupos para distinguir al equipo de los famosos
+# Carpetas donde se guardan los rostros de integrantes y famosos.
 CARPETA_DATASET = os.path.join(CARPETA_BASE, "dataset")
 CARPETA_INTEGRANTES = os.path.join(CARPETA_DATASET, "integrantes_equipo")
 CARPETA_FAMOSOS = os.path.join(CARPETA_DATASET, "famosos")
 
-# Fotos de los famosos sin recortar, una subcarpeta por cada uno.
-# Si están en otro disco se escribe aquí la ruta completa entre comillas.
-# Dejándolo vacío, el programa pregunta la ruta al momento de recortar
+# Ruta de las fotografías originales de los famosos.
+# Si está vacía, se utiliza la carpeta predeterminada.
 CARPETA_DE_FOTOS_FAMOSOS = r""
-CARPETA_FOTOS_SIN_RECORTAR = (CARPETA_DE_FOTOS_FAMOSOS or
-                              os.path.join(CARPETA_BASE, "fotos_famosos_sin_recortar"))
+if CARPETA_DE_FOTOS_FAMOSOS:
+    CARPETA_FOTOS_SIN_RECORTAR = CARPETA_DE_FOTOS_FAMOSOS
+else:
+    CARPETA_FOTOS_SIN_RECORTAR = os.path.join(CARPETA_BASE, "fotos_famosos_sin_recortar")
 
-# Cuántas imágenes se guardan de cada persona
+# Configuración de captura y procesamiento.
 IMAGENES_POR_PERSONA = 100
-
-# Medida en pixeles de cada recorte guardado
 TAMANO_RECORTE = 160
-
-# Espacio alrededor de la cara detectada. En cero el recorte queda
-# ajustado al rostro, sin cuello ni hombros
 MARGEN = 0.0
-
-# Tiempo de espera entre una captura y la siguiente
 SEGUNDOS_ENTRE_CAPTURAS = 0.15
-
-# Los recortes por debajo de este valor se consideran borrosos.
-# Con cero no se descarta ninguno
 NITIDEZ_MINIMA = 25.0
-
-# Con True las imágenes se guardan en blanco y negro
 GUARDAR_EN_GRIS = False
-
-# Con True la cámara se ve en espejo, como en una videollamada.
-# Solo cambia lo que se ve en pantalla, no lo que se guarda
 MODO_ESPEJO = True
-
-# Grados que se gira la imagen de la cámara. Algunas laptops la entregan
-# de cabeza. Durante la captura se gira con la tecla R y el valor que
-# funcione se anota aquí
 ROTACION = 0
-
-# Cámara con la que se intenta primero. Si no entrega imagen se prueban
-# las siguientes
 INDICE_CAMARA = 0
 
+# Clasificador de rostros y formatos de imagen admitidos.
 ARCHIVO_HAAR = "haarcascade_frontalface_default.xml"
 EXTENSIONES_IMAGEN = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
-# La fuente que trae OpenCV se ve tosca y no admite acentos.
-# Si Pillow está instalado se usa una fuente del sistema
+# Pillow es opcional, pero permite mostrar textos con acentos.
 try:
     from PIL import Image, ImageDraw, ImageFont
     HAY_PILLOW = True
 except ImportError:
     HAY_PILLOW = False
 
+# Fuentes disponibles para mostrar los textos de la ventana.
 RUTAS_DE_FUENTE = [
     r"C:\Windows\Fonts\segoeui.ttf",
     r"C:\Windows\Fonts\calibri.ttf",
@@ -105,7 +84,7 @@ RUTAS_DE_FUENTE = [
     "/System/Library/Fonts/Helvetica.ttc",
 ]
 
-# Las mismas fuentes en negrita, para los títulos
+# Versiones en negrita para los títulos y contadores.
 RUTAS_DE_FUENTE_NEGRITA = [
     r"C:\Windows\Fonts\segoeuib.ttf",
     r"C:\Windows\Fonts\calibrib.ttf",
@@ -116,8 +95,7 @@ RUTAS_DE_FUENTE_NEGRITA = [
 
 FUENTES_CARGADAS = {}
 
-# Colores de la ventana en orden rojo, verde, azul.
-# OpenCV los usa al revés, por eso existe la función a_bgr
+# Colores de la interfaz en formato RGB
 COLOR_PANEL = (14, 16, 22)
 COLOR_TITULO = (255, 255, 255)
 COLOR_ACENTO = (215, 222, 235)
@@ -128,7 +106,7 @@ COLOR_FONDO_AVISO = (74, 28, 34)
 COLOR_TEXTO_SUAVE = (186, 193, 209)
 COLOR_CHIP = (48, 53, 66)
 
-# Alto de las dos franjas oscuras de la ventana
+# Altura de los paneles superior e inferior de la ventana
 ALTO_PANEL_ARRIBA = 80
 ALTO_PANEL_ABAJO = 44
 
@@ -139,40 +117,29 @@ def cargar_detector():
     Primero se busca el que trae OpenCV y si no está se usa la copia
     incluida junto a este programa.
     """
-    rutas = []
-    carpeta_opencv = getattr(getattr(cv2, "data", None), "haarcascades", None)
-    if carpeta_opencv:
-        rutas.append(os.path.join(carpeta_opencv, ARCHIVO_HAAR))
-    rutas.append(os.path.join(CARPETA_BASE, ARCHIVO_HAAR))
-
-    for ruta in rutas:
-        if os.path.isfile(ruta):
-            detector = cv2.CascadeClassifier(ruta)
-            if not detector.empty():
-                return detector
-
-    sys.exit("No se encontró el archivo " + ARCHIVO_HAAR +
-             ". Debe estar en la misma carpeta que este programa.")
+    detector = cargar_cascada_extra(ARCHIVO_HAAR)
+    if detector is None:
+        sys.exit("No se encontró el archivo " + ARCHIVO_HAAR +
+                 ". Debe estar en la misma carpeta que este programa.")
+    return detector
 
 
 def nombre_de_carpeta(nombre):
     """
     Convierte un nombre en un texto que sirva como nombre de carpeta.
     Juan Pérez García queda como Juan_Perez_Garcia.
-    Se quitan los acentos porque en Windows dan problemas al guardar.
     """
-    sin_acentos = unicodedata.normalize("NFKD", nombre)
-    sin_acentos = "".join(c for c in sin_acentos if not unicodedata.combining(c))
-    palabras = "".join(c if c.isalnum() else " " for c in sin_acentos).split()
+    sin_acentos = quitar_acentos(nombre)
+    limpio = ""
+    for caracter in sin_acentos:
+        if caracter.isalnum():
+            limpio = limpio + caracter
+        else:
+            limpio = limpio + " "
+    palabras = limpio.split()
     return "_".join(palabras)
 
-
 def leer_imagen(ruta):
-    """
-    Lee una imagen del disco.
-    No se usa cv2.imread porque en Windows falla cuando la ruta tiene
-    acentos, y la carpeta del proyecto los lleva.
-    """
     try:
         datos = np.fromfile(ruta, dtype=np.uint8)
     except OSError:
@@ -183,7 +150,6 @@ def leer_imagen(ruta):
 
 
 def guardar_imagen(ruta, imagen):
-    """Guarda una imagen. No se usa cv2.imwrite por el mismo motivo que arriba."""
     extension = os.path.splitext(ruta)[1]
     correcto, memoria = cv2.imencode(extension, imagen, [cv2.IMWRITE_JPEG_QUALITY, 92])
     if not correcto:
@@ -192,11 +158,9 @@ def guardar_imagen(ruta, imagen):
     try:
         memoria.tofile(ruta)
     except OSError as problema:
-        # Suele pasar cuando se acaba el espacio en disco. Se avisa y se
-        # devuelve False en lugar de cortar el programa
+        # Si ocurre un error al guardar, se informa sin detener el programa.
         print("No se pudo guardar " + os.path.basename(ruta) + ". " + str(problema))
         try:
-            # Para no dejar un archivo vacío a medio escribir
             if os.path.isfile(ruta) and os.path.getsize(ruta) == 0:
                 os.remove(ruta)
         except OSError:
@@ -213,32 +177,19 @@ def buscar_rostro(imagen, detector, lado_minimo):
     incorrectas suelen ser más pequeñas.
     Devuelve None si no encuentra ninguno.
     """
-    gris = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
-
-    # Empareja el contraste, lo que ayuda cuando hay poca luz
-    gris = cv2.equalizeHist(gris)
-
-    rostros = detector.detectMultiScale(
-        gris,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(lado_minimo, lado_minimo),
-    )
-    if len(rostros) == 0:
-        return None
-
-    mas_grande = max(rostros, key=lambda caja: caja[2] * caja[3])
-    return tuple(int(valor) for valor in mas_grande)
+    gris = cv2.equalizeHist(cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY))
+    return rostro_mas_grande(detector, gris, 1.1, 5, lado_minimo)
 
 
 def cargar_cascada_extra(archivo):
     """
-    Carga otra de las cascadas incluidas en OpenCV.
-    Devuelve None si esa instalación no la trae, para que el programa
-    pueda seguir sin ella.
+    Carga un clasificador Haar Cascade adicional desde OpenCV o la carpeta
+    del programa. Si no lo encuentra, devuelve None para continuar sin él.
     """
     rutas = []
-    carpeta_opencv = getattr(getattr(cv2, "data", None), "haarcascades", None)
+    carpeta_opencv = ""
+    if hasattr(cv2, "data"):
+        carpeta_opencv = cv2.data.haarcascades
     if carpeta_opencv:
         rutas.append(os.path.join(carpeta_opencv, archivo))
     rutas.append(os.path.join(CARPETA_BASE, archivo))
@@ -250,23 +201,24 @@ def cargar_cascada_extra(archivo):
                 return cascada
     return None
 
-
 def rostro_mas_grande(cascada, gris, escala, vecinos, lado_minimo):
     """Aplica una cascada con los parámetros dados y devuelve el rostro más grande."""
     rostros = cascada.detectMultiScale(gris, scaleFactor=escala, minNeighbors=vecinos,
                                        minSize=(lado_minimo, lado_minimo))
     if len(rostros) == 0:
         return None
-    return tuple(int(valor) for valor in max(rostros, key=lambda caja: caja[2] * caja[3]))
+    mas_grande = max(rostros, key=lambda caja: caja[2] * caja[3])
+    return tuple(int(valor) for valor in mas_grande)
 
 
 def buscar_rostro_a_fondo(imagen, detector, alterna, perfil):
     """
-    Busca el rostro probando varias configuraciones antes de darse por vencido.
-    Se usa solo con las fotografías de los famosos, donde la cara puede estar
-    de perfil, inclinada o pequeña dentro de la imagen. En la cámara se sigue
-    usando la búsqueda estricta, porque bajar las exigencias en vivo hace que
-    se recorten partes del fondo.
+    Busca rostros utilizando diferentes configuraciones de Haar Cascade.
+    Se utiliza únicamente con las imágenes de los famosos, donde las
+    caras pueden aparecer de perfil, inclinadas o a menor tamaño.
+    Para las capturas con la cámara se mantiene una detección más estricta,
+    con el fin de reducir los recortes incorrectos de otras zonas de la imagen.
+
     Devuelve la imagen de la que hay que recortar, ya que algunos intentos
     trabajan sobre la foto volteada o girada, la posición del rostro, y si el
     resultado vino del primer intento o de los siguientes.
@@ -275,23 +227,23 @@ def buscar_rostro_a_fondo(imagen, detector, alterna, perfil):
     lado = max(30, min(imagen.shape[:2]) // 8)
     lado_chico = max(24, lado // 2)
 
-    # Primer intento con la configuración estricta, la misma de la cámara
+    # Primero se utiliza la misma configuración que en la cámara
     caja = rostro_mas_grande(detector, gris, 1.1, 5, lado)
     if caja is not None:
         return imagen, caja, True
 
-    # Búsqueda más fina y menos exigente, que acepta caras más pequeñas
+    # Se ajustan los parámetros para detectar rostros más pequeños
     caja = rostro_mas_grande(detector, gris, 1.05, 3, lado_chico)
     if caja is not None:
         return imagen, caja, False
 
-    # Otra cascada Haar, entrenada con imágenes distintas
+    # Se intenta detectar el rostro con otro clasificador Haar Cascade
     if alterna is not None:
         caja = rostro_mas_grande(alterna, gris, 1.05, 3, lado_chico)
         if caja is not None:
             return imagen, caja, False
 
-    # Cascada de perfil. La imagen volteada sirve para el perfil contrario
+    # Se buscan rostros de perfil en ambas orientaciones
     if perfil is not None:
         caja = rostro_mas_grande(perfil, gris, 1.05, 3, lado_chico)
         if caja is not None:
@@ -300,7 +252,7 @@ def buscar_rostro_a_fondo(imagen, detector, alterna, perfil):
         if caja is not None:
             return cv2.flip(imagen, 1), caja, False
 
-    # Caras inclinadas. Se gira la foto unos grados y se recorta de la girada
+    # Se gira la imagen para intentar detectar rostros inclinados.
     medida = (imagen.shape[1], imagen.shape[0])
     centro = (medida[0] / 2.0, medida[1] / 2.0)
     for grados in (-14, 14, -25, 25):
@@ -315,13 +267,12 @@ def buscar_rostro_a_fondo(imagen, detector, alterna, perfil):
 
 def confirmar_rostro(recorte, detector, alterna, perfil):
     """
-    Vuelve a aplicar el detector sobre un recorte ya hecho, probando las tres
-    cascadas y la imagen volteada.
-    Si en una imagen que se supone que es un rostro ya no se detecta ninguno,
-    lo más probable es que el recorte haya tomado otra cosa.
-    Esta comprobación se aplica a los recortes que no salieron del primer
-    intento, porque con un rostro frontal bien detectado falla de vez en cuando.
+    Comprueba si un recorte contiene un rostro utilizando diferentes
+    clasificadores Haar Cascade y la imagen invertida.
+    Se utiliza para revisar detecciones menos estrictas y reducir
+    los recortes incorrectos.
     """
+
     gris = recorte if recorte.ndim == 2 else cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
     gris = cv2.equalizeHist(gris)
     lado = max(40, gris.shape[0] // 3)
@@ -365,14 +316,14 @@ def recortar_rostro(imagen, caja):
 def medir_nitidez(recorte):
     """
     Calcula qué tan enfocada está una imagen con la varianza del laplaciano.
-    Entre más bajo el resultado, más borrosa está.
+    Entre más bajo el resultado, más borrosa está
     """
     gris = recorte if recorte.ndim == 2 else cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
     return cv2.Laplacian(gris, cv2.CV_64F).var()
 
 
 def subcarpetas(carpeta):
-    """Devuelve los nombres de las subcarpetas que contiene una carpeta."""
+    """Devuelve los nombres de las subcarpetas que contiene una carpeta"""
     return sorted(d for d in os.listdir(carpeta)
                   if os.path.isdir(os.path.join(carpeta, d)))
 
@@ -382,7 +333,7 @@ def listar_imagenes(carpeta):
 
 
 def siguiente_numero(carpeta):
-    """Devuelve el siguiente número libre, para no sobrescribir lo que ya existe."""
+    """Devuelve el siguiente número libre, para no sobrescribir lo que ya existe"""
     numeros = [0]
     for archivo in listar_imagenes(carpeta):
         partes = os.path.splitext(archivo)[0].split("_")
@@ -414,7 +365,7 @@ def capturar_con_camara(detector):
 
     print("\nControles de la ventana de la cámara")
     print("   ESPACIO   inicia o pausa la captura")
-    print("   R         gira la imagen, por si la cámara la entrega de cabeza")
+    print("   R         gira la imagen para modificar su orientación")
     print("   Q         termina")
     print("Mientras captura, muévete despacio. Gira la cara a los lados, súbela")
     print("y bájala un poco, y cambia de expresión, para que las imágenes varíen.")
@@ -442,7 +393,10 @@ def capturar_con_camara(detector):
 
         if caja is not None:
             x, y, ancho, alto = caja
-            x_vista = cuadro.shape[1] - x - ancho if MODO_ESPEJO else x
+            if MODO_ESPEJO:
+                x_vista = cuadro.shape[1] - x - ancho
+            else:
+                x_vista = x
             dibujar_marco(vista, (x_vista, y, ancho, alto),
                           COLOR_CAPTURANDO if capturando else COLOR_PAUSA)
 
@@ -461,7 +415,7 @@ def capturar_con_camara(detector):
         total = ya_guardadas + guardadas
         vista = escribir_en_pantalla(vista, carpeta_persona, total, capturando,
                                      caja is None, rotacion)
-        cv2.imshow("Tarea 6, captura de rostros", vista)
+        cv2.imshow("Tarea #6. Dataset propio de rostros", vista)
 
         tecla = cv2.waitKey(1) & 0xFF
         if tecla in (ord("q"), ord("Q"), 27):
@@ -489,12 +443,13 @@ def capturar_con_camara(detector):
 
 def abrir_camara():
     """
-    Abre la cámara y devuelve la primera que entregue imagen.
-    Se prueban varios índices porque hay equipos con cámaras virtuales que
-    abren sin error pero solo devuelven cuadros en negro.
-    En Windows se usa el backend DirectShow porque inicia más rápido.
+    Abre la primera cámara disponible y comprueba que muestre imagen.
+    Si no funciona, intenta utilizar otras cámaras.
     """
-    indices = [INDICE_CAMARA] + [i for i in range(4) if i != INDICE_CAMARA]
+    indices = [INDICE_CAMARA]
+    for otro in range(4):
+        if otro != INDICE_CAMARA:
+            indices.append(otro)
 
     for indice in indices:
         if os.name == "nt":
@@ -516,7 +471,7 @@ def abrir_camara():
 
 
 def girar(imagen, grados):
-    """Gira la imagen en múltiplos de 90 grados."""
+    """Gira la imagen de 90 en 90 grados."""
     if grados == 90:
         return cv2.rotate(imagen, cv2.ROTATE_90_CLOCKWISE)
     if grados == 180:
@@ -527,14 +482,17 @@ def girar(imagen, grados):
 
 
 def obtener_fuente(tamano, negrita=False):
-    """Carga una fuente del sistema y la guarda para no volver a leerla del disco."""
+    """Carga una fuente del sistema y la guarda para reutilizarla."""
     if not HAY_PILLOW:
         return None
     clave = (tamano, negrita)
     if clave not in FUENTES_CARGADAS:
         FUENTES_CARGADAS[clave] = None
-        # Si no se encuentra la negrita se usa la normal
-        rutas = RUTAS_DE_FUENTE_NEGRITA + RUTAS_DE_FUENTE if negrita else RUTAS_DE_FUENTE
+
+        if negrita:
+            rutas = RUTAS_DE_FUENTE_NEGRITA + RUTAS_DE_FUENTE
+        else:
+            rutas = RUTAS_DE_FUENTE
         for ruta in rutas:
             if os.path.isfile(ruta):
                 try:
@@ -549,14 +507,12 @@ def quitar_acentos(texto):
     normal = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in normal if not unicodedata.combining(c))
 
-
 def a_bgr(color):
     """Cambia un color de rojo, verde, azul al orden que usa OpenCV."""
     return (color[2], color[1], color[0])
 
-
 def medir_texto(texto, tamano, negrita=False):
-    """Devuelve el ancho en pixeles que va a ocupar un texto."""
+    """Calcula el ancho que ocupa un texto en píxeles"""
     fuente = obtener_fuente(tamano, negrita)
     if fuente is None:
         escala = tamano / 32.0
@@ -592,7 +548,7 @@ def rectangulo_redondeado(vista, esquina1, esquina2, color, radio):
 
 
 def dibujar_marco(vista, caja, color):
-    """Marca el rostro detectado con cuatro esquinas, para no taparlo."""
+    """Marca el rostro detectado con cuatro esquinas para no taparlo."""
     x, y, ancho, alto = caja
     color_bgr = a_bgr(color)
 
@@ -601,9 +557,9 @@ def dibujar_marco(vista, caja, color):
     vista[:] = cv2.addWeighted(capa, 0.38, vista, 0.62, 0)
 
     largo = max(16, int(min(ancho, alto) * 0.24))
-    esquinas = (((x, y), 1, 1), ((x + ancho, y), -1, 1),
-                ((x, y + alto), 1, -1), ((x + ancho, y + alto), -1, -1))
-    for (punto_x, punto_y), hacia_x, hacia_y in esquinas:
+    esquinas = ((x, y, 1, 1), (x + ancho, y, -1, 1),
+                (x, y + alto, 1, -1), (x + ancho, y + alto, -1, -1))
+    for punto_x, punto_y, hacia_x, hacia_y in esquinas:
         cv2.line(vista, (punto_x, punto_y), (punto_x + hacia_x * largo, punto_y),
                  color_bgr, 3, cv2.LINE_AA)
         cv2.line(vista, (punto_x, punto_y), (punto_x, punto_y + hacia_y * largo),
@@ -612,11 +568,7 @@ def dibujar_marco(vista, caja, color):
 
 def dibujar_textos(vista, textos):
     """
-    Escribe una lista de textos sobre la imagen. De cada uno se indica el
-    contenido, la posición, el tamaño, si va en negrita, el color y si se
-    alinea a la derecha.
-    Con Pillow se usa una fuente del sistema. Si no está instalado se usa la
-    de OpenCV, que no admite acentos y por eso se le quitan.
+        Muestra textos sobre la imagen utilizando Pillow u OpenCV
     """
     if obtener_fuente(13) is None:
         for texto, posicion, tamano, negrita, color, a_la_derecha in textos:
@@ -624,7 +576,10 @@ def dibujar_textos(vista, textos):
             grosor = 2 if negrita else 1
             plano = quitar_acentos(texto)
             medida = cv2.getTextSize(plano, cv2.FONT_HERSHEY_SIMPLEX, escala, grosor)[0]
-            x = posicion[0] - medida[0] if a_la_derecha else posicion[0]
+            if a_la_derecha:
+                x = posicion[0] - medida[0]
+            else:
+                x = posicion[0]
             cv2.putText(vista, plano, (x, posicion[1] + medida[1]),
                         cv2.FONT_HERSHEY_SIMPLEX, escala, a_bgr(color), grosor, cv2.LINE_AA)
         return vista
@@ -688,8 +643,8 @@ def escribir_en_pantalla(vista, persona, total, capturando, sin_rostro, rotacion
 
 def procesar_famosos(detector):
     """
-    Recorta el rostro de las fotografías descargadas de los famosos.
-    Cada famoso debe tener su propia subcarpeta dentro de la carpeta de fotos.
+    Detecta y recorta los rostros de las imágenes descargadas de los famosos.
+    Las imágenes originales deben estar organizadas en carpetas por persona.
     """
     carpeta_origen = CARPETA_FOTOS_SIN_RECORTAR
     if not os.path.isdir(carpeta_origen):
@@ -697,8 +652,6 @@ def procesar_famosos(detector):
 
     famosos = subcarpetas(carpeta_origen)
     if not famosos:
-        # Si la carpeta de siempre está vacía se pregunta dónde están las fotos,
-        # porque pesan mucho y a veces se guardan en otro disco
         print("\nNo hay subcarpetas de famosos en " + carpeta_origen)
         print("Ahí debe ir una carpeta por famoso, con sus fotografías adentro.")
         otra = input("Si están en otra carpeta, pega aquí la ruta y pulsa Enter: ")
@@ -714,14 +667,14 @@ def procesar_famosos(detector):
             print("Esa carpeta no tiene subcarpetas de famosos adentro.")
             return
 
-    # Cascadas de apoyo para las fotos donde la primera no encuentra el rostro
+    # Clasificadores adicionales para detectar rostros que el primero no encontró.
     alterna = cargar_cascada_extra("haarcascade_frontalface_alt2.xml")
     perfil = cargar_cascada_extra("haarcascade_profileface.xml")
 
     print("\nFamosos encontrados: " + str(len(famosos)))
 
-    # Los datasets de Kaggle traen decenas de personas y casi nunca se usan
-    # todas. Procesarlas todas tarda mucho y ocupa bastante espacio
+    # Se solicita confirmación si hay más de 10 famosos, ya que los datasets
+    # de Kaggle que son los que se han utilizado, pueden contener muchas personas e imágenes para procesar
     if len(famosos) > 10:
         print("Son bastantes. Recortarlos todos tarda un buen rato y ocupa")
         print("mucho espacio. Lo normal es dejar en la carpeta solo los que se")
@@ -734,9 +687,10 @@ def procesar_famosos(detector):
     for famoso in famosos:
         origen = os.path.join(carpeta_origen, famoso)
 
-        # Las carpetas del dataset de Kaggle empiezan con pins_.
-        # Se le quita para que la clase lleve el nombre de la persona
-        nombre_limpio = famoso[5:] if famoso.lower().startswith("pins_") else famoso
+        # Se elimina el prefijo "pins_" de las carpetas descargadas de Kaggle
+        nombre_limpio = famoso
+        if famoso.lower().startswith("pins_"):
+            nombre_limpio = famoso[len("pins_"):]
         carpeta_persona = nombre_de_carpeta(nombre_limpio)
         destino = os.path.join(CARPETA_FAMOSOS, carpeta_persona)
         os.makedirs(destino, exist_ok=True)
@@ -746,11 +700,7 @@ def procesar_famosos(detector):
         sin_rostro = 0
         no_confirmadas = 0
         con_insistencia = 0
-
-        # Recortes borrosos, por si al final faltan imágenes
         apartadas = []
-
-        # Fotos ya revisadas en la primera vuelta
         usadas = set()
 
         se_lleno_el_disco = False
@@ -768,9 +718,8 @@ def procesar_famosos(detector):
 
         archivos = listar_imagenes(origen)
 
-        # Primera vuelta con la configuración estricta, que es la que menos
-        # detecciones incorrectas produce. Cuando hay fotografías de sobra las
-        # cien imágenes salen de aquí y no hacen falta las otras dos vueltas
+        # Primera búsqueda con parámetros más estrictos para reducir detecciones
+        # incorrectas. Si se completan las 100, no se necesitan más intentos
         for archivo in archivos:
             if guardadas >= IMAGENES_POR_PERSONA or se_lleno_el_disco:
                 break
@@ -790,8 +739,8 @@ def procesar_famosos(detector):
                 continue
             guardar(recorte)
 
-        # Segunda vuelta, solo si faltan imágenes. Aquí se usan las otras
-        # cascadas y la foto girada, y cada recorte se comprueba otra vez
+        # Segunda búsqueda, si todavía faltan imágenes. Se utilizan las otras
+        # cascadas Haar y diferentes orientaciones para detectar y verificar más rostros
         for archivo in archivos:
             if guardadas >= IMAGENES_POR_PERSONA or se_lleno_el_disco:
                 break
@@ -818,9 +767,8 @@ def procesar_famosos(detector):
             if guardar(recorte):
                 con_insistencia += 1
 
-        # Tercera vuelta, si todavía faltan. Se aprovechan los recortes que se
-        # habían apartado por borrosos, del mejor enfocado al peor, y se
-        # comprueban antes de guardarlos
+        # Tercera búsqueda, si todavía faltan imágenes. Se revisan los recortes
+        # descartados por falta de nitidez, comenzando por los menos borrosos.
         apartadas.sort(key=lambda par: par[0], reverse=True)
         recuperadas = 0
         for nitidez, recorte in apartadas:
@@ -860,11 +808,6 @@ def main():
     detector = cargar_detector()
     os.makedirs(CARPETA_DATASET, exist_ok=True)
 
-    opciones = {
-        "1": lambda: capturar_con_camara(detector),
-        "2": lambda: procesar_famosos(detector),
-    }
-
     while True:
         print("\nDATASET DE ROSTROS")
         print("   1. Capturar rostros con la cámara")
@@ -872,13 +815,14 @@ def main():
         print("   3. Salir")
         opcion = input("Elige una opción: ").strip()
 
-        if opcion == "3":
+        if opcion == "1":
+            capturar_con_camara(detector)
+        elif opcion == "2":
+            procesar_famosos(detector)
+        elif opcion == "3":
             break
-        if opcion in opciones:
-            opciones[opcion]()
         else:
             print("Esa opción no existe.")
-
 
 if __name__ == "__main__":
     main()
